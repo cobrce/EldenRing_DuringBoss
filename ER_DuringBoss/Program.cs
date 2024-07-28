@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Timers;
 using Magic;
+using System.Text.Json;
+using System.Security.Cryptography;
 
 
 namespace ER_DuringBoss
@@ -14,15 +16,13 @@ namespace ER_DuringBoss
     internal class Program
     {
 
-        static BlackMagic CreateProcessReaderLoop()
+        static BlackMagic CreateProcessReaderLoop(int processId, string processName)
         {
-
             BlackMagic ER = new BlackMagic() { SetDebugPrivileges = false };
-            const string processName = "eldenring";
 
             while (true)
             {
-                var process = SProcess.GetProcessFromProcessName(processName);
+                var process = processId != 0 ? processId : SProcess.GetProcessFromProcessName(processName);
 
                 if (ER.OpenProcessAndThread(process))
                 {
@@ -65,10 +65,8 @@ namespace ER_DuringBoss
             InFight,
             NotInFight
         }
-
-        static void Main(string[] args)
+        static void PrintBanner()
         {
-            Stopwatch stopwatch = new();
             Console.WriteLine(
 @"            Detect Eldenring's boss fight by COB
                      Game version 1.12.3
@@ -76,13 +74,38 @@ namespace ER_DuringBoss
 * Thanks to GrandArchives cheat engine table for patterns *
 *  Using modified version of BlackMagic to read process   *
 -----------------------------------------------------------");
+        }
+
+        static void Main(string[] args)
+        {
+
+            PrintBanner();
+
+            Console.WriteLine("Reading config file");
+            var config = Config.Load();
+            var stopwatch = new Stopwatch();
+            int processId = 0;
+
+            if (config.Attach)
+            {
+                Console.WriteLine($"Config : attach to {config.ProcessName}");
+            }
+            else
+            {
+                processId = RunGame(config);
+                if (processId == 0)
+                {
+                    Console.WriteLine("Can't run process");
+                    Environment.Exit(0);
+                }
+            }
 
             while (true)
             {
-                Console.WriteLine("Searching for process");
+                Console.WriteLine(config.Attach ? "Searching for process" : "Waiting for process");
 
                 // infinite loop
-                var blackMagic = CreateProcessReaderLoop();
+                var blackMagic = CreateProcessReaderLoop(processId, config.ProcessName);
                 Console.WriteLine($"Process {blackMagic.ProcessId} opened");
 
                 PatternState patternState = PatternState.PatternNotFound;
@@ -131,7 +154,7 @@ namespace ER_DuringBoss
                                             stopwatch.Stop();
 
                                             // https://stackoverflow.com/a/9994060
-                                            TimeSpan t = TimeSpan.FromMilliseconds(stopwatch.ElapsedMilliseconds);                                           
+                                            TimeSpan t = TimeSpan.FromMilliseconds(stopwatch.ElapsedMilliseconds);
                                             string answer = string.Format("{0:D2}h:{1:D2}m:{2:D2}s:{3:D3}ms",
                                                                     t.Hours,
                                                                     t.Minutes,
@@ -152,6 +175,12 @@ namespace ER_DuringBoss
                     {
                         if (e.Message.Contains("Process is not open") || e.Message.Contains("ReadInt failed"))
                         {
+                            if (!config.Attach)
+                            {
+                                Console.WriteLine("Game terminated, closing...");
+                                Environment.Exit(0);
+                            }
+
                             blackMagic.Close();
                             Console.WriteLine("Process closed, searching for new process...");
                             break;
@@ -160,6 +189,21 @@ namespace ER_DuringBoss
                     }
                 }
             }
+        }
+
+        private static int RunGame(Config config)
+        {
+            Console.WriteLine($"Config : run game located at {config.Fullpath}");
+            Environment.SetEnvironmentVariable("SteamAppId", "1245620");
+
+            var processStartInfo = new ProcessStartInfo()
+            {
+                FileName = config.Fullpath,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(config.Fullpath)
+            };
+            var process = Process.Start(processStartInfo);
+            return process == null ? 0 : process.Id;
         }
 
         private static long SearchPtrToGameDataManOffsetLoop(BlackMagic blackMagic)
