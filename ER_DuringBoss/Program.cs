@@ -100,95 +100,115 @@ namespace ER_DuringBoss
                 }
             }
 
+            AttachToProcessAndDoWorkLoop(config, stopwatch, processId);
+        }
+
+        private static void AttachToProcessAndDoWorkLoop(Config config, Stopwatch stopwatch, int processId)
+        {
             while (true)
             {
                 Console.WriteLine(config.Attach ? "Searching for process" : "Waiting for process");
 
-                // infinite loop
                 var blackMagic = CreateProcessReaderLoop(processId, config.ProcessName);
                 Console.WriteLine($"Process {blackMagic.ProcessId} opened");
 
-                PatternState patternState = PatternState.PatternNotFound;
-                BossFightState bossFightState = BossFightState.NotInFight;
-                stopwatch.Reset();
+                FindPatternAndDoWorkLoop(config, stopwatch, blackMagic);
+            }
+        }
 
-                long ptrToGameDataMan = 0;
-                while (true)
+        private static void FindPatternAndDoWorkLoop(Config config, Stopwatch stopwatch, BlackMagic blackMagic)
+        {
+            PatternState patternState = PatternState.PatternNotFound;
+            BossFightState bossFightState = BossFightState.NotInFight;
+            stopwatch.Reset();
+
+            long ptrToGameDataMan = 0;
+            while (true)
+            {
+                try
                 {
-                    try
+                    switch (patternState)
                     {
-                        switch (patternState)
-                        {
-                            case PatternState.PatternNotFound:
-                                ptrToGameDataMan = SearchPtrToGameDataManOffsetLoop(blackMagic);
-                                long GameDataMan = blackMagic.ReadInt64(ptrToGameDataMan);
-                                if (GameDataMan != 0)
-                                {
-                                    Console.WriteLine($"GameDataMan location {GameDataMan:x}");
-                                    patternState = PatternState.PatternFound;
-                                }
-                                break;
-                            case PatternState.PatternFound:
-                                GameDataMan = blackMagic.ReadInt64(ptrToGameDataMan);
-                                if (GameDataMan == 0) // is the pointer not valid anymore?
-                                {
-                                    Console.WriteLine("Can't read data, maybe game is in main menu?");
-                                    patternState = PatternState.PatternNotFound; break;  // search for pattern
-                                }
-
-                                byte readBossFight = ReadIsBossFight(blackMagic, GameDataMan);
-                                switch (bossFightState)
-                                {
-                                    case BossFightState.NotInFight:
-                                        if (readBossFight == 1)
-                                        {
-                                            Console.WriteLine("Boss fight started");
-                                            bossFightState = BossFightState.InFight;
-                                            stopwatch.Start();
-                                        }
-                                        break;
-
-                                    case BossFightState.InFight:
-                                        if (readBossFight == 0)
-                                        {
-                                            stopwatch.Stop();
-
-                                            // https://stackoverflow.com/a/9994060
-                                            TimeSpan t = TimeSpan.FromMilliseconds(stopwatch.ElapsedMilliseconds);
-                                            string answer = string.Format("{0:D2}h:{1:D2}m:{2:D2}s:{3:D3}ms",
-                                                                    t.Hours,
-                                                                    t.Minutes,
-                                                                    t.Seconds,
-                                                                    t.Milliseconds);
-
-                                            Console.WriteLine($"Boss fight ended, {answer}");
-                                            bossFightState = BossFightState.NotInFight;
-                                        }
-                                        break;
-                                }
-
-
-                                break;
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        if (e.Message.Contains("Process is not open") || e.Message.Contains("ReadInt failed"))
-                        {
-                            if (!config.Attach)
-                            {
-                                Console.WriteLine("Game terminated, closing...");
-                                Environment.Exit(0);
-                            }
-
-                            blackMagic.Close();
-                            Console.WriteLine("Process closed, searching for new process...");
+                        case PatternState.PatternNotFound:
+                            ptrToGameDataMan = FindPattern(blackMagic, ref patternState);
                             break;
-                        }
-
+                        case PatternState.PatternFound:
+                            long GameDataMan = blackMagic.ReadInt64(ptrToGameDataMan);
+                            if (GameDataMan == 0) // is the pointer not valid anymore?
+                            {
+                                Console.WriteLine("Can't read data, maybe game is in main menu?");
+                                patternState = PatternState.PatternNotFound; break;  // search for pattern
+                            }
+                            bossFightState = TimeBossFightLoop(stopwatch, blackMagic, bossFightState, GameDataMan);
+                            break;
                     }
                 }
+                catch (Exception e)
+                {
+                    if (e.Message.Contains("Process is not open") || e.Message.Contains("ReadInt failed"))
+                    {
+                        if (!config.Attach)
+                        {
+                            Console.WriteLine("Game terminated, closing...");
+                            Environment.Exit(0);
+                        }
+
+                        blackMagic.Close();
+                        Console.WriteLine("Process closed, searching for new process...");
+                        break;
+                    }
+
+                }
             }
+        }
+
+        private static BossFightState TimeBossFightLoop(Stopwatch stopwatch, BlackMagic blackMagic, BossFightState bossFightState, long GameDataMan)
+        {
+            byte readBossFight = ReadIsBossFight(blackMagic, GameDataMan);
+            switch (bossFightState)
+            {
+                case BossFightState.NotInFight:
+                    if (readBossFight == 1)
+                    {
+                        Console.WriteLine("Boss fight started");
+                        bossFightState = BossFightState.InFight;
+                        stopwatch.Start();
+                    }
+                    break;
+
+                case BossFightState.InFight:
+                    if (readBossFight == 0)
+                    {
+                        stopwatch.Stop();
+
+                        // https://stackoverflow.com/a/9994060
+                        TimeSpan t = TimeSpan.FromMilliseconds(stopwatch.ElapsedMilliseconds);
+                        string answer = string.Format("{0:D2}h:{1:D2}m:{2:D2}s:{3:D3}ms",
+                                                t.Hours,
+                                                t.Minutes,
+                                                t.Seconds,
+                                                t.Milliseconds);
+
+                        Console.WriteLine($"Boss fight ended, {answer}");
+                        bossFightState = BossFightState.NotInFight;
+                    }
+                    break;
+            }
+
+            return bossFightState;
+        }
+
+        private static long FindPattern(BlackMagic blackMagic, ref PatternState patternState)
+        {
+            long ptrToGameDataMan = SearchPtrToGameDataManOffsetLoop(blackMagic);
+            long GameDataMan = blackMagic.ReadInt64(ptrToGameDataMan);
+            if (GameDataMan != 0)
+            {
+                Console.WriteLine($"GameDataMan location {GameDataMan:x}");
+                patternState = PatternState.PatternFound;
+            }
+
+            return ptrToGameDataMan;
         }
 
         private static int RunGame(Config config)
