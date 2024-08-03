@@ -172,24 +172,25 @@ namespace ER_DuringBoss
                     {
                         Console.WriteLine("Boss fight started");
                         bossFightState = BossFightState.InFight;
+                        stopwatch.Reset();
                         stopwatch.Start();
                     }
                     break;
 
                 case BossFightState.InFight:
+                    // https://stackoverflow.com/a/9994060
+                    TimeSpan t = TimeSpan.FromMilliseconds(stopwatch.ElapsedMilliseconds);
+                    string answer = string.Format("\r{0:D2}h:{1:D2}m:{2:D2}s:{3:D3}ms",
+                                            t.Hours,
+                                            t.Minutes,
+                                            t.Seconds,
+                                            t.Milliseconds);
+                    Console.Write(answer);
                     if (readBossFight == 0)
                     {
                         stopwatch.Stop();
-
-                        // https://stackoverflow.com/a/9994060
-                        TimeSpan t = TimeSpan.FromMilliseconds(stopwatch.ElapsedMilliseconds);
-                        string answer = string.Format("{0:D2}h:{1:D2}m:{2:D2}s:{3:D3}ms",
-                                                t.Hours,
-                                                t.Minutes,
-                                                t.Seconds,
-                                                t.Milliseconds);
-
-                        Console.WriteLine($"Boss fight ended, {answer}");
+                        Console.WriteLine();
+                        Console.WriteLine("Boss fight ended");
                         bossFightState = BossFightState.NotInFight;
                     }
                     break;
